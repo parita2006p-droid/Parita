@@ -1,0 +1,783 @@
+```html
+<!DOCTYPE html>
+<html lang="th">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>AR Skeleton Fruit Catcher - เกม AR โครงกระดูกเก็บผลไม้</title>
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- FontAwesome Icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <!-- Google Font - Kanit -->
+    <link href="https://fonts.googleapis.com/css2?family=Kanit:wght@300;400;600;800;900&display=swap" rel="stylesheet">
+    
+    <!-- MediaPipe Pose & Camera Utils -->
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose/pose.js" crossorigin="anonymous"></script>
+
+    <style>
+        body {
+            font-family: 'Kanit', sans-serif;
+            touch-action: manipulation;
+            user-select: none;
+            overflow: hidden;
+            background-color: #020617;
+        }
+
+        /* Mirror video preview */
+        .mirror {
+            transform: scaleX(-1);
+        }
+
+        /* Glassmorphism visual containers */
+        .glass {
+            background: rgba(15, 23, 42, 0.75);
+            backdrop-filter: blur(16px);
+            -webkit-backdrop-filter: blur(16px);
+            border: 1px solid rgba(255, 255, 255, 0.12);
+        }
+
+        /* Screen Shake FX on Bomb Hit */
+        @keyframes shake {
+            0%, 100% { transform: translate(0, 0); }
+            20% { transform: translate(-10px, 8px); }
+            40% { transform: translate(10px, -8px); }
+            60% { transform: translate(-6px, 4px); }
+            80% { transform: translate(6px, -4px); }
+        }
+
+        .apply-shake {
+            animation: shake 0.4s ease-in-out;
+        }
+
+        @keyframes popIn {
+            0% { transform: scale(0.6); opacity: 0; }
+            80% { transform: scale(1.05); opacity: 1; }
+            100% { transform: scale(1); opacity: 1; }
+        }
+
+        .animate-pop {
+            animation: popIn 0.35s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards;
+        }
+    </style>
+</head>
+<body class="text-white h-screen w-screen relative">
+
+    <!-- Game Container Layer -->
+    <div id="game-container" class="relative w-full h-full overflow-hidden flex items-center justify-center">
+        <!-- Hidden WebCam Video element -->
+        <video id="webcam" class="hidden" playsinline></video>
+        
+        <!-- Main Render Canvas -->
+        <canvas id="output_canvas" class="w-full h-full object-cover mirror absolute inset-0 z-0"></canvas>
+
+        <!-- UI Overlay Layer -->
+        <div id="ui-layer" class="absolute inset-0 z-10 flex flex-col justify-between p-4 md:p-6 pointer-events-none">
+            
+            <!-- Top HUD Bar -->
+            <div id="top-bar" class="flex justify-between items-center w-full max-w-5xl mx-auto hidden">
+                <!-- Score & Combo -->
+                <div class="glass px-5 py-3 rounded-2xl flex items-center gap-5 shadow-2xl border-l-4 border-emerald-400">
+                    <div>
+                        <div class="text-[10px] text-emerald-300/80 uppercase font-semibold tracking-wider">คะแนน</div>
+                        <div id="score-text" class="text-3xl md:text-4xl font-black text-emerald-400 leading-none">0</div>
+                    </div>
+                    <div class="h-8 w-[1px] bg-slate-700"></div>
+                    <div>
+                        <div class="text-[10px] text-amber-300/80 uppercase font-semibold tracking-wider">คอมโบ</div>
+                        <div id="combo-text" class="text-2xl md:text-3xl font-extrabold text-amber-400 leading-none">x0</div>
+                    </div>
+                </div>
+
+                <!-- Skeleton Mode Indicator -->
+                <div class="hidden sm:flex items-center glass px-5 py-2.5 rounded-2xl border-t-2 border-cyan-400 gap-2">
+                    <span class="w-3 h-3 rounded-full bg-cyan-400 animate-ping"></span>
+                    <span class="text-xs font-bold text-cyan-200 uppercase tracking-wider">จับการเคลื่อนไหวโครงกระดูก (AR Pose)</span>
+                </div>
+
+                <!-- Timer (1 Minute) -->
+                <div class="glass px-5 py-3 rounded-2xl flex items-center gap-3 shadow-2xl border-r-4 border-rose-500">
+                    <i class="fa-solid fa-stopwatch text-rose-400 text-3xl animate-pulse"></i>
+                    <div>
+                        <div class="text-[10px] text-rose-300/80 uppercase font-semibold tracking-wider">เวลา</div>
+                        <div id="timer-text" class="text-3xl md:text-4xl font-black text-rose-400 leading-none">60</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Bottom Instruction Bar -->
+            <div id="bottom-bar" class="w-full max-w-xl mx-auto flex justify-center items-center gap-3 hidden">
+                <div class="glass px-6 py-2.5 rounded-full text-xs text-cyan-200 flex items-center gap-3 border border-cyan-500/30 shadow-lg">
+                    <i class="fa-solid fa-hand text-cyan-400 text-lg"></i>
+                    <span>ยื่นมือ/ขยับร่างกายไปรับ <b class="text-emerald-400">ผลไม้</b> และหลบ <b class="text-rose-400">ระเบิด</b>!</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- Start / Main Menu Screen -->
+        <div id="menu-screen" class="absolute inset-0 z-20 flex items-center justify-center p-4 bg-slate-950/85 backdrop-blur-md">
+            <div class="max-w-md w-full glass rounded-3xl p-6 md:p-8 border border-white/10 shadow-2xl text-center space-y-6 animate-pop">
+                
+                <div class="space-y-2">
+                    <div class="inline-flex p-3.5 rounded-2xl bg-gradient-to-br from-emerald-500 via-teal-600 to-cyan-600 text-white shadow-xl shadow-emerald-500/20">
+                        <i class="fa-solid fa-bone text-4xl"></i>
+                    </div>
+                    <h1 class="text-3xl md:text-4xl font-black text-transparent bg-clip-text bg-gradient-to-r from-emerald-400 via-teal-200 to-cyan-400 tracking-wide">
+                        SKELETON CATCHER
+                    </h1>
+                    <p class="text-slate-300 text-xs md:text-sm font-light">เกม AR ตรวจจับโครงกระดูก เก็บผลไม้ตกลงมาในเวลา 1 นาที</p>
+                </div>
+
+                <!-- Rules Box -->
+                <div class="bg-slate-900/70 p-4 rounded-2xl text-left border border-slate-800 space-y-2">
+                    <div class="text-xs font-bold text-emerald-400 uppercase tracking-wider flex items-center gap-2">
+                        <i class="fa-solid fa-gamepad"></i> กติกาการเล่น (1 นาที)
+                    </div>
+                    <ul class="text-xs text-slate-300 space-y-1.5 list-disc list-inside font-light">
+                        <li>ยืนให้กล้องเห็นร่างกายเพื่อสร้าง <span class="text-cyan-400 font-bold">เส้นโครงกระดูก</span></li>
+                        <li>ใช้มือขยับแตะเก็บ <span class="text-emerald-400 font-bold">ผลไม้</span> (แอปเปิ้ล, ส้ม, กล้วย, แตงโม) เพื่อรับแต้ม</li>
+                        <li>หลีกเลี่ยง <span class="text-rose-400 font-bold">ระเบิด</span> หากโดนระเบิดจะถูกหักคะแนน!</li>
+                    </ul>
+                </div>
+
+                <!-- Start Action Button -->
+                <div class="pt-2">
+                    <button id="start-btn" onclick="startGame()" class="w-full py-4 rounded-2xl bg-gradient-to-r from-emerald-500 via-teal-500 to-cyan-500 hover:from-emerald-400 hover:to-cyan-400 text-slate-950 font-black text-lg tracking-wider shadow-xl shadow-emerald-500/25 transition transform hover:-translate-y-0.5 active:translate-y-0 flex items-center justify-center gap-2">
+                        <i class="fa-solid fa-play"></i> เริ่มเล่นเกม (1 นาที)
+                    </button>
+                    <p id="camera-loading-text" class="text-xs text-amber-400 mt-2 hidden animate-pulse">
+                        <i class="fa-solid fa-spinner fa-spin"></i> กำลังโหลดระบบตรวจจับโครงกระดูก AI...
+                    </p>
+                </div>
+            </div>
+        </div>
+
+        <!-- Game Over Screen -->
+        <div id="gameover-screen" class="absolute inset-0 z-20 flex items-center justify-center p-4 bg-slate-950/90 backdrop-blur-md hidden">
+            <div class="max-w-md w-full glass rounded-3xl p-6 md:p-8 border border-white/10 shadow-2xl text-center space-y-6 animate-pop">
+                
+                <div class="space-y-2">
+                    <div class="inline-flex p-4 rounded-full bg-amber-500/20 text-amber-400 border border-amber-500/30">
+                        <i class="fa-solid fa-trophy text-4xl"></i>
+                    </div>
+                    <h2 class="text-3xl font-black text-white">หมดเวลา 1 นาที!</h2>
+                    <p class="text-slate-400 text-xs">สรุปผลคะแนนการออกกำลังกายฟันผลไม้</p>
+                </div>
+
+                <!-- Stats Summary -->
+                <div class="grid grid-cols-2 gap-3 py-1">
+                    <div class="glass p-4 rounded-2xl border border-white/5">
+                        <div class="text-[10px] text-slate-400 font-medium">คะแนนรวม</div>
+                        <div id="final-score" class="text-3xl font-black text-emerald-400">0</div>
+                    </div>
+                    <div class="glass p-4 rounded-2xl border border-white/5">
+                        <div class="text-[10px] text-slate-400 font-medium">คอมโบสูงสุด</div>
+                        <div id="final-combo" class="text-3xl font-black text-amber-400">0x</div>
+                    </div>
+                </div>
+
+                <!-- Actions -->
+                <div class="space-y-2.5">
+                    <button onclick="copyScoreResult()" class="w-full py-3 rounded-xl bg-cyan-500/20 hover:bg-cyan-500/30 border border-cyan-500/40 text-cyan-300 font-bold text-sm transition flex items-center justify-center gap-2">
+                        <i class="fa-solid fa-copy"></i> คัดลอกผลคะแนน
+                    </button>
+                    <button onclick="restartGame()" class="w-full py-3.5 rounded-xl bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-400 hover:to-teal-500 text-slate-950 font-extrabold text-base shadow-lg shadow-emerald-500/20 transition flex items-center justify-center gap-2">
+                        <i class="fa-solid fa-rotate-right"></i> เล่นใหม่อีกครั้ง
+                    </button>
+                    <button onclick="returnToMenu()" class="w-full py-3 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 font-semibold text-sm transition">
+                        กลับสู่เมนูหลัก
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Toast Notification for Copy -->
+        <div id="toast" class="fixed bottom-6 left-1/2 -translate-x-1/2 z-40 bg-emerald-400 text-slate-950 font-bold px-5 py-2.5 rounded-full shadow-2xl transition-all duration-300 opacity-0 pointer-events-none transform translate-y-4 flex items-center gap-2 text-xs md:text-sm">
+            <i class="fa-solid fa-circle-check text-base"></i>
+            <span id="toast-msg">คัดลอกคะแนนแล้ว!</span>
+        </div>
+
+        <!-- Custom Error Notification Modal -->
+        <div id="error-modal" class="absolute inset-0 z-30 flex items-center justify-center p-4 bg-slate-950/90 backdrop-blur-md hidden">
+            <div class="max-w-sm w-full glass rounded-2xl p-6 border border-rose-500/30 text-center space-y-4 animate-pop">
+                <div class="inline-flex p-3 rounded-full bg-rose-500/20 text-rose-400">
+                    <i class="fa-solid fa-triangle-exclamation text-3xl"></i>
+                </div>
+                <h3 id="error-title" class="text-xl font-bold text-white">เกิดข้อผิดพลาด</h3>
+                <p id="error-msg" class="text-xs text-slate-300">ไม่สามารถเข้าถึงกล้องได้</p>
+                <button onclick="closeErrorModal()" class="w-full py-2.5 rounded-xl bg-rose-500 hover:bg-rose-600 text-white font-bold text-sm transition">
+                    ตกลง
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Game Config & State
+        let score = 0;
+        let combo = 0;
+        let maxCombo = 0;
+        let timeLeft = 60; // 1 minute
+        let timerInterval = null;
+        let isGameActive = false;
+
+        // Items array (Fruits & Bombs)
+        let fallingItems = [];
+        let visualParticles = [];
+        let floatingTexts = [];
+
+        // Skeleton Landmarks & Hands Tracking
+        let poseLandmarks = null;
+        let hands = {
+            leftHand: { x: 0, y: 0, detected: false },
+            rightHand: { x: 0, y: 0, detected: false }
+        };
+
+        // Item Definitions (Emojis, Scores, Radii, Colors)
+        const ITEM_TYPES = [
+            { type: 'fruit', emoji: '🍎', score: 100, radius: 35, color: '#ef4444' },
+            { type: 'fruit', emoji: '🍊', score: 120, radius: 35, color: '#f97316' },
+            { type: 'fruit', emoji: '🍌', score: 150, radius: 38, color: '#eab308' },
+            { type: 'fruit', emoji: '🍉', score: 200, radius: 42, color: '#22c55e' },
+            { type: 'fruit', emoji: '🍓', score: 180, radius: 32, color: '#ec4899' },
+            { type: 'star',  emoji: '⭐', score: 300, radius: 30, color: '#eab308' },
+            { type: 'bomb',  emoji: '💣', score: -150, radius: 36, color: '#f43f5e' }
+        ];
+
+        // Web Audio API Synth Effects
+        const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+
+        function playSound(type) {
+            if (audioCtx.state === 'suspended') {
+                audioCtx.resume();
+            }
+            const osc = audioCtx.createOscillator();
+            const gain = audioCtx.createGain();
+            osc.connect(gain);
+            gain.connect(audioCtx.destination);
+
+            const now = audioCtx.currentTime;
+
+            if (type === 'fruit_catch') {
+                osc.type = 'sine';
+                osc.frequency.setValueAtTime(600, now);
+                osc.frequency.exponentialRampToValueAtTime(1200, now + 0.12);
+                gain.gain.setValueAtTime(0.3, now);
+                gain.gain.exponentialRampToValueAtTime(0.01, now + 0.15);
+                osc.start(now);
+                osc.stop(now + 0.15);
+            } else if (type === 'bomb_explode') {
+                osc.type = 'sawtooth';
+                osc.frequency.setValueAtTime(150, now);
+                osc.frequency.exponentialRampToValueAtTime(40, now + 0.3);
+                gain.gain.setValueAtTime(0.5, now);
+                gain.gain.exponentialRampToValueAtTime(0.01, now + 0.35);
+                osc.start(now);
+                osc.stop(now + 0.35);
+            }
+        }
+
+        // DOM Elements
+        const videoElement = document.getElementById('webcam');
+        const canvasElement = document.getElementById('output_canvas');
+        const canvasCtx = canvasElement.getContext('2d');
+        const gameContainer = document.getElementById('game-container');
+
+        const menuScreen = document.getElementById('menu-screen');
+        const gameoverScreen = document.getElementById('gameover-screen');
+        const errorModal = document.getElementById('error-modal');
+        const topBar = document.getElementById('top-bar');
+        const bottomBar = document.getElementById('bottom-bar');
+
+        const scoreText = document.getElementById('score-text');
+        const comboText = document.getElementById('combo-text');
+        const timerText = document.getElementById('timer-text');
+        const cameraLoadingText = document.getElementById('camera-loading-text');
+
+        function resizeCanvas() {
+            canvasElement.width = window.innerWidth;
+            canvasElement.height = window.innerHeight;
+        }
+        window.addEventListener('resize', resizeCanvas);
+        resizeCanvas();
+
+        function showErrorMsg(title, message) {
+            document.getElementById('error-title').innerText = title;
+            document.getElementById('error-msg').innerText = message;
+            errorModal.classList.remove('hidden');
+        }
+
+        function closeErrorModal() {
+            errorModal.classList.add('hidden');
+        }
+
+        function spawnFallingItem() {
+            if (!isGameActive) return;
+
+            // 28% Bomb chance, 72% Fruit/Star
+            const isBomb = Math.random() < 0.28;
+            let itemDef;
+
+            if (isBomb) {
+                itemDef = ITEM_TYPES.find(i => i.type === 'bomb');
+            } else {
+                const fruits = ITEM_TYPES.filter(i => i.type !== 'bomb');
+                itemDef = fruits[Math.floor(Math.random() * fruits.length)];
+            }
+
+            const margin = itemDef.radius + 30;
+            const x = Math.random() * (canvasElement.width - margin * 2) + margin;
+            const y = -itemDef.radius * 2; // Spawn above screen
+
+            const speed = Math.random() * 2.5 + 3.5; // Fall speed
+
+            fallingItems.push({
+                x: x,
+                y: y,
+                vy: speed,
+                rotation: 0,
+                vRot: (Math.random() - 0.5) * 0.08,
+                def: itemDef
+            });
+        }
+
+        function createExplosionParticles(x, y, color) {
+            for (let i = 0; i < 18; i++) {
+                const angle = Math.random() * Math.PI * 2;
+                const speed = Math.random() * 7 + 2;
+                visualParticles.push({
+                    x: x,
+                    y: y,
+                    vx: Math.cos(angle) * speed,
+                    vy: Math.sin(angle) * speed,
+                    radius: Math.random() * 5 + 2,
+                    color: color,
+                    alpha: 1.0
+                });
+            }
+        }
+
+        function createFloatingText(x, y, text, color) {
+            floatingTexts.push({
+                x: x,
+                y: y,
+                text: text,
+                color: color,
+                alpha: 1.0,
+                vy: -2
+            });
+        }
+
+        function triggerScreenShake() {
+            gameContainer.classList.add('apply-shake');
+            setTimeout(() => {
+                gameContainer.classList.remove('apply-shake');
+            }, 400);
+        }
+
+        function checkCollision(item, index, handX, handY) {
+            const dist = Math.hypot(handX - item.x, handY - item.y);
+            if (dist < item.def.radius + 25) {
+                if (item.def.type === 'bomb') {
+                    playSound('bomb_explode');
+                    combo = 0;
+                    score = Math.max(0, score + item.def.score);
+                    triggerScreenShake();
+                    createExplosionParticles(item.x, item.y, '#f43f5e');
+                    createFloatingText(item.x, item.y, `${item.def.score} ระเบิด!`, '#f43f5e');
+                } else {
+                    playSound('fruit_catch');
+                    combo++;
+                    if (combo > maxCombo) maxCombo = combo;
+                    const gainedScore = item.def.score + (combo * 15);
+                    score += gainedScore;
+
+                    createExplosionParticles(item.x, item.y, item.def.color);
+                    createFloatingText(item.x, item.y, `+${gainedScore}`, '#4ade80');
+                }
+
+                scoreText.innerText = score;
+                comboText.innerText = `x${combo}`;
+
+                fallingItems.splice(index, 1);
+                return true;
+            }
+            return false;
+        }
+
+        const pose = new Pose({
+            locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${file}`
+        });
+
+        pose.setOptions({
+            modelComplexity: 1,
+            smoothLandmarks: true,
+            enableSegmentation: false,
+            minDetectionConfidence: 0.5,
+            minTrackingConfidence: 0.5
+        });
+
+        pose.onResults(onPoseResults);
+
+        function onPoseResults(results) {
+            if (!isGameActive) return;
+
+            // Render Webcam Frame Mirrored
+            canvasCtx.save();
+            canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
+            canvasCtx.drawImage(results.image, 0, 0, canvasElement.width, canvasElement.height);
+
+            // Save Skeleton Keypoints
+            poseLandmarks = results.poseLandmarks;
+
+            if (poseLandmarks) {
+                // Track Index Fingers & Wrists
+                const leftWrist = poseLandmarks[19] || poseLandmarks[15];
+                const rightWrist = poseLandmarks[20] || poseLandmarks[16];
+
+                if (leftWrist && leftWrist.visibility > 0.4) {
+                    hands.leftHand = {
+                        x: (1 - leftWrist.x) * canvasElement.width,
+                        y: leftWrist.y * canvasElement.height,
+                        detected: true
+                    };
+                } else {
+                    hands.leftHand.detected = false;
+                }
+
+                if (rightWrist && rightWrist.visibility > 0.4) {
+                    hands.rightHand = {
+                        x: (1 - rightWrist.x) * canvasElement.width,
+                        y: rightWrist.y * canvasElement.height,
+                        detected: true
+                    };
+                } else {
+                    hands.rightHand.detected = false;
+                }
+            }
+
+            // Execute main frame render
+            updateGameLoop();
+
+            canvasCtx.restore();
+        }
+
+        const SKELETON_CONNECTIONS = [
+            [11, 12], [11, 13], [13, 15], [12, 14], [14, 16], // Arms
+            [11, 23], [12, 24], [23, 24],                    // Torso
+            [23, 25], [25, 27], [24, 26], [26, 28]             // Legs
+        ];
+
+        function drawSkeleton(landmarks) {
+            if (!landmarks) return;
+
+            const width = canvasElement.width;
+            const height = canvasElement.height;
+
+            // Draw Bone Lines
+            SKELETON_CONNECTIONS.forEach(([i, j]) => {
+                const pt1 = landmarks[i];
+                const pt2 = landmarks[j];
+
+                if (pt1 && pt2 && pt1.visibility > 0.4 && pt2.visibility > 0.4) {
+                    const x1 = (1 - pt1.x) * width;
+                    const y1 = pt1.y * height;
+                    const x2 = (1 - pt2.x) * width;
+                    const y2 = pt2.y * height;
+
+                    canvasCtx.beginPath();
+                    canvasCtx.moveTo(x1, y1);
+                    canvasCtx.lineTo(x2, y2);
+                    canvasCtx.strokeStyle = '#38bdf8'; // Cyan Neon Glow
+                    canvasCtx.lineWidth = 6;
+                    canvasCtx.shadowColor = '#0284c7';
+                    canvasCtx.shadowBlur = 12;
+                    canvasCtx.stroke();
+                    canvasCtx.shadowBlur = 0;
+                }
+            });
+
+            // Draw Skeleton Joint Circles
+            landmarks.forEach((pt, idx) => {
+                if (pt && pt.visibility > 0.4 && idx >= 11) {
+                    const x = (1 - pt.x) * width;
+                    const y = pt.y * height;
+
+                    canvasCtx.beginPath();
+                    canvasCtx.arc(x, y, 7, 0, Math.PI * 2);
+                    canvasCtx.fillStyle = '#22d3ee';
+                    canvasCtx.shadowColor = '#06b6d4';
+                    canvasCtx.shadowBlur = 10;
+                    canvasCtx.fill();
+                    canvasCtx.shadowBlur = 0;
+                }
+            });
+        }
+
+        function updateGameLoop() {
+            // Render AR Skeleton Overlay
+            if (poseLandmarks) {
+                drawSkeleton(poseLandmarks);
+            }
+
+            // Spawn Items
+            if (Math.random() < 0.045 && fallingItems.length < 😎 {
+                spawnFallingItem();
+            }
+
+            // Update & Draw Falling Fruits / Bombs
+            for (let i = fallingItems.length - 1; i >= 0; i--) {
+                const item = fallingItems[i];
+                item.y += item.vy;
+                item.rotation += item.vRot;
+
+                // Collision detection with hands
+                let hit = false;
+                if (hands.leftHand.detected) {
+                    hit = checkCollision(item, i, hands.leftHand.x, hands.leftHand.y);
+                }
+                if (!hit && hands.rightHand.detected) {
+                    hit = checkCollision(item, i, hands.rightHand.x, hands.rightHand.y);
+                }
+
+                if (hit) continue;
+
+                // Remove items off screen
+                if (item.y > canvasElement.height + item.def.radius * 2) {
+                    fallingItems.splice(i, 1);
+                    continue;
+                }
+
+                // Draw Falling Item
+                canvasCtx.save();
+                canvasCtx.translate(item.x, item.y);
+                canvasCtx.rotate(item.rotation);
+
+                // Outer Aura
+                canvasCtx.beginPath();
+                canvasCtx.arc(0, 0, item.def.radius, 0, Math.PI * 2);
+                canvasCtx.fillStyle = 'rgba(15, 23, 42, 0.6)';
+                canvasCtx.strokeStyle = item.def.color;
+                canvasCtx.lineWidth = 3;
+                canvasCtx.shadowColor = item.def.color;
+                canvasCtx.shadowBlur = 12;
+                canvasCtx.fill();
+                canvasCtx.stroke();
+                canvasCtx.shadowBlur = 0;
+
+                // Emoji Icon
+                canvasCtx.font = `${Math.floor(item.def.radius * 1.3)}px serif`;
+                canvasCtx.textAlign = 'center';
+                canvasCtx.textBaseline = 'middle';
+                canvasCtx.fillText(item.def.emoji, 0, 2);
+
+                canvasCtx.restore();
+            }
+
+            // Render Particle FX
+            for (let i = visualParticles.length - 1; i >= 0; i--) {
+                const p = visualParticles[i];
+                p.x += p.vx;
+                p.y += p.vy;
+                p.alpha -= 0.03;
+
+                if (p.alpha <= 0) {
+                    visualParticles.splice(i, 1);
+                    continue;
+                }
+
+                canvasCtx.save();
+                canvasCtx.globalAlpha = p.alpha;
+                canvasCtx.beginPath();
+                canvasCtx.arc(p.x, p.y, p.radius, 0, Math.PI * 2);
+                canvasCtx.fillStyle = p.color;
+                canvasCtx.fill();
+                canvasCtx.restore();
+            }
+
+            // Render Floating Hit Texts
+            for (let i = floatingTexts.length - 1; i >= 0; i--) {
+                const ht = floatingTexts[i];
+                ht.y += ht.vy;
+                ht.alpha -= 0.025;
+
+                if (ht.alpha <= 0) {
+                    floatingTexts.splice(i, 1);
+                    continue;
+                }
+
+                canvasCtx.save();
+                canvasCtx.globalAlpha = ht.alpha;
+                canvasCtx.fillStyle = ht.color;
+                canvasCtx.font = "bold 24px 'Kanit'";
+                canvasCtx.textAlign = 'center';
+                canvasCtx.fillText(ht.text, ht.x, ht.y);
+                canvasCtx.restore();
+            }
+
+            // Render Hand Reticles
+            [hands.leftHand, hands.rightHand].forEach((hand, idx) => {
+                if (hand.detected) {
+                    const color = idx === 0 ? '#38bdf8' : '#f43f5e';
+
+                    canvasCtx.beginPath();
+                    canvasCtx.arc(hand.x, hand.y, 32, 0, Math.PI * 2);
+                    canvasCtx.fillStyle = idx === 0 ? 'rgba(56, 189, 248, 0.25)' : 'rgba(244, 63, 94, 0.25)';
+                    canvasCtx.fill();
+
+                    canvasCtx.beginPath();
+                    canvasCtx.arc(hand.x, hand.y, 14, 0, Math.PI * 2);
+                    canvasCtx.fillStyle = color;
+                    canvasCtx.shadowColor = color;
+                    canvasCtx.shadowBlur = 18;
+                    canvasCtx.fill();
+                    canvasCtx.shadowBlur = 0;
+
+                    canvasCtx.fillStyle = '#FFFFFF';
+                    canvasCtx.font = "bold 11px 'Kanit'";
+                    canvasCtx.textAlign = 'center';
+                    canvasCtx.fillText(idx === 0 ? 'มือซ้าย' : 'มือขวา', hand.x, hand.y + 26);
+                }
+            });
+        }
+
+        let camera = null;
+
+        async function initCamera() {
+            cameraLoadingText.classList.remove('hidden');
+
+            camera = new Camera(videoElement, {
+                onFrame: async () => {
+                    await pose.send({ image: videoElement });
+                },
+                width: 1280,
+                height: 720
+            });
+
+            try {
+                await camera.start();
+                cameraLoadingText.classList.add('hidden');
+                return true;
+            } catch (err) {
+                cameraLoadingText.classList.add('hidden');
+                showErrorMsg('เปิดใช้งานกล้องไม่สำเร็จ', 'ไม่สามารถเชื่อมต่อกล้องถ่ายรูปได้ โปรดตรวจสอบการอนุญาตสิทธิ์การใช้งานกล้องในเบราว์เซอร์');
+                return false;
+            }
+        }
+
+        async function startGame() {
+            if (!camera) {
+                const success = await initCamera();
+                if (!success) return;
+            }
+
+            score = 0;
+            combo = 0;
+            maxCombo = 0;
+            timeLeft = 60; // 1 minute
+            isGameActive = true;
+
+            fallingItems = [];
+            visualParticles = [];
+            floatingTexts = [];
+
+            scoreText.innerText = score;
+            comboText.innerText = 'x0';
+            timerText.innerText = timeLeft;
+
+            menuScreen.classList.add('hidden');
+            gameoverScreen.classList.add('hidden');
+            topBar.classList.remove('hidden');
+            bottomBar.classList.remove('hidden');
+
+            clearInterval(timerInterval);
+            timerInterval = setInterval(() => {
+                timeLeft--;
+                timerText.innerText = timeLeft;
+
+                if (timeLeft <= 0) {
+                    endGame();
+                }
+            }, 1000);
+        }
+
+        function endGame() {
+            isGameActive = false;
+            clearInterval(timerInterval);
+
+            topBar.classList.add('hidden');
+            bottomBar.classList.add('hidden');
+
+            document.getElementById('final-score').innerText = score;
+            document.getElementById('final-combo').innerText = `${maxCombo}x`;
+            gameoverScreen.classList.remove('hidden');
+        }
+
+        function restartGame() {
+            startGame();
+        }
+
+        function returnToMenu() {
+            gameoverScreen.classList.add('hidden');
+            menuScreen.classList.remove('hidden');
+        }
+
+        // --- COPY TO CLIPBOARD FUNCTION ---
+        function copyScoreResult() {
+            const shareText = `🎮 สรุปผลคะแนน AR Skeleton Catcher!\n🏆 คะแนนรวม: ${score} แต้ม\n🔥 คอมโบสูงสุด: ${maxCombo}x\nสนุกกับการออกกำลังกายฟันผลไม้ 1 นาที`;
+            
+            const textarea = document.createElement('textarea');
+            textarea.value = shareText;
+            textarea.style.position = 'fixed';
+            textarea.style.opacity = '0';
+            document.body.appendChild(textarea);
+            textarea.select();
+            
+            try {
+                document.execCommand('copy');
+                showToast('คัดลอกสรุปผลคะแนนเรียบร้อยแล้ว!');
+            } catch (err) {
+                showToast('ไม่สามารถคัดลอกคะแนนได้');
+            } finally {
+                document.body.removeChild(textarea);
+            }
+        }
+
+        function showToast(msg) {
+            const toast = document.getElementById('toast');
+            const toastMsg = document.getElementById('toast-msg');
+            toastMsg.innerText = msg;
+            toast.classList.remove('opacity-0', 'translate-y-4', 'pointer-events-none');
+            toast.classList.add('opacity-100', 'translate-y-0');
+            
+            setTimeout(() => {
+                toast.classList.remove('opacity-100', 'translate-y-0');
+                toast.classList.add('opacity-0', 'translate-y-4', 'pointer-events-none');
+            }, 2500);
+        }
+
+        // Touch & Mouse click interaction fallback
+        canvasElement.addEventListener('touchstart', handleTouch);
+        canvasElement.addEventListener('mousedown', handleTouch);
+
+        function handleTouch(e) {
+            if (!isGameActive) return;
+            const rect = canvasElement.getBoundingClientRect();
+            const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+            const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+
+            const x = clientX - rect.left;
+            const y = clientY - rect.top;
+
+            for (let i = fallingItems.length - 1; i >= 0; i--) {
+                if (checkCollision(fallingItems[i], i, x, y)) {
+                    break;
+                }
+            }
+        }
+    </script>
+</body>
+</html>
+
+```
