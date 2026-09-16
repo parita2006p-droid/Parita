@@ -1,0 +1,591 @@
+<!DOCTYPE html>
+<html lang="th" class="h-full w-full overflow-hidden">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>คณิตคิดเลขเร็ว AR - Body Motion Edition</title>
+<!-- Tailwind CSS -->
+<script src="https://cdn.tailwindcss.com"></script>
+<!-- Google Fonts: Mali -->
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Mali:wght@400;600;700&display=swap" rel="stylesheet">
+<!-- MediaPipe Pose & Camera Utils -->
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose/pose.js" crossorigin="anonymous"></script>
+<!-- Tone.js for Audio Effects -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/tone/14.8.49/Tone.js"></script>
+<style>
+* {
+font-family: 'Mali', cursive;
+user-select: none;
+-webkit-user-select: none;
+touch-action: manipulation;
+}
+/* Video and Canvas Mirroring */
+.mirror {
+transform: scaleX(-1);
+}
+/* 3D Jelly Theme Styling */
+.jelly-box {
+border: 4px solid #ffffff;
+box-shadow: 0 10px 0 0 rgba(0, 0, 0, 0.2), inset 0 4px 0 0 rgba(255, 255, 255, 0.6);
+}
+.jelly-btn {
+border: 4px solid #ffffff;
+transition: transform 0.1s ease, box-shadow 0.1s ease;
+position: relative;
+overflow: hidden;
+}
+.jelly-btn-yellow {
+background: linear-gradient(180deg, #FFDE59 0%, #FF914D 100%);
+box-shadow: 0 8px 0 0 #D35400, inset 0 4px 0 0 rgba(255, 255, 255, 0.6);
+color: #ffffff;
+text-shadow: 2px 2px 0 #900C3F;
+}
+.jelly-btn-blue {
+background: linear-gradient(180deg, #5271FF 0%, #38B6FF 100%);
+box-shadow: 0 8px 0 0 #1B4F72, inset 0 4px 0 0 rgba(255, 255, 255, 0.6);
+color: #ffffff;
+text-shadow: 2px 2px 0 #1B2631;
+}
+.jelly-btn-pink {
+background: linear-gradient(180deg, #FF66C4 0%, #FF5757 100%);
+box-shadow: 0 8px 0 0 #900C3F, inset 0 4px 0 0 rgba(255, 255, 255, 0.6);
+color: #ffffff;
+text-shadow: 2px 2px 0 #581845;
+}
+.jelly-btn-purple {
+background: linear-gradient(180deg, #8C52FF 0%, #5E17EB 100%);
+box-shadow: 0 8px 0 0 #3B0086, inset 0 4px 0 0 rgba(255, 255, 255, 0.6);
+color: #ffffff;
+text-shadow: 2px 2px 0 #1A003B;
+}
+.jelly-btn-green {
+background: linear-gradient(180deg, #00E676 0%, #00B0FF 100%);
+box-shadow: 0 8px 0 0 #006064, inset 0 4px 0 0 rgba(255, 255, 255, 0.6);
+color: #ffffff;
+text-shadow: 2px 2px 0 #003300;
+}
+.jelly-btn:active {
+transform: translateY(4px);
+box-shadow: 0 2px 0 0 rgba(0,0,0,0.4);
+}
+/* Animations */
+@keyframes popCorrect {
+0% { transform: scale(1); }
+50% { transform: scale(1.15); }
+100% { transform: scale(1); }
+}
+.pop-correct {
+animation: popCorrect 0.4s ease-in-out;
+border-color: #00FF66 !important;
+}
+@keyframes shakeWrong {
+0%, 100% { transform: translateX(0); }
+20%, 60% { transform: translateX(-12px); }
+40%, 80% { transform: translateX(12px); }
+}
+.shake-wrong {
+animation: shakeWrong 0.4s ease-in-out;
+border-color: #FF0055 !important;
+}
+/* Particle Stars */
+.star-particle {
+position: absolute;
+pointer-events: none;
+animation: floatAndFade 0.8s ease-out forwards;
+font-size: 2rem;
+z-index: 50;
+}
+@keyframes floatAndFade {
+0% { opacity: 1; transform: translate(0, 0) scale(0.5) rotate(0deg); }
+100% { opacity: 0; transform: translate(var(--tw-translate-x), var(--tw-translate-y)) scale(1.5) rotate(360deg); }
+}
+/* Confetti Items */
+.confetti {
+position: absolute;
+top: -50px;
+font-size: 2.5rem;
+user-select: none;
+pointer-events: none;
+animation: fall linear infinite;
+z-index: 60;
+}
+@keyframes fall {
+0% { transform: translateY(0) rotate(0deg); opacity: 1; }
+100% { transform: translateY(105vh) rotate(720deg); opacity: 0.8; }
+}
+</style>
+</head>
+<body class="h-full w-full overflow-hidden bg-slate-950 text-white relative">
+<!-- AR Camera View Background -->
+<div class="absolute inset-0 w-full h-full z-0 overflow-hidden">
+<video id="webcam" class="hidden" playsinline></video>
+<canvas id="output_canvas" class="w-full h-full object-cover mirror"></canvas>
+</div>
+<!-- Hand Tracker Pointer 1: Left Wrist -->
+<div id="left-hand-pointer" class="fixed pointer-events-none z-50 transform -translate-x-1/2 -translate-y-1/2 transition-opacity duration-200 opacity-0">
+<div class="relative flex items-center justify-center">
+<svg class="w-20 h-20 transform -rotate-90">
+<circle cx="40" cy="40" r="34" stroke="rgba(255, 255, 255, 0.4)" stroke-width="8" fill="none"/>
+<circle id="left-progress-ring" cx="40" cy="40" r="34" stroke="#FF5757" stroke-width="8" fill="none"
+stroke-dasharray="213.6" stroke-dashoffset="213.6" stroke-linecap="round"/>
+</svg>
+<div class="absolute inset-0 flex items-center justify-center text-3xl drop-shadow-[0_4px_4px_rgba(0,0,0,0.5)]">
+🥊
+</div>
+</div>
+</div>
+<!-- Hand Tracker Pointer 2: Right Wrist -->
+<div id="right-hand-pointer" class="fixed pointer-events-none z-50 transform -translate-x-1/2 -translate-y-1/2 transition-opacity duration-200 opacity-0">
+<div class="relative flex items-center justify-center">
+<svg class="w-20 h-20 transform -rotate-90">
+<circle cx="40" cy="40" r="34" stroke="rgba(255, 255, 255, 0.4)" stroke-width="8" fill="none"/>
+<circle id="right-progress-ring" cx="40" cy="40" r="34" stroke="#FFD700" stroke-width="8" fill="none"
+stroke-dasharray="213.6" stroke-dashoffset="213.6" stroke-linecap="round"/>
+</svg>
+<div class="absolute inset-0 flex items-center justify-center text-3xl drop-shadow-[0_4px_4px_rgba(0,0,0,0.5)]">
+⭐
+</div>
+</div>
+</div>
+<!-- UI Overlay Layer -->
+<div id="ui-layer" class="relative z-10 w-full h-screen max-h-screen overflow-hidden flex flex-col justify-between items-center p-4">
+<!-- 1. LOADING SCREEN -->
+<div id="loading-screen" class="w-full h-full flex flex-col items-center justify-center text-center my-auto">
+<div class="bg-white/95 backdrop-blur-md text-slate-800 p-6 md:p-8 rounded-[30px] jelly-box max-w-md w-full flex flex-col items-center gap-4">
+<div class="text-6xl animate-bounce">🧘‍♂️</div>
+<h1 class="text-2xl md:text-3xl font-bold text-pink-600">กำลังเปิดระบบตรวจจับร่างกาย...</h1>
+<p class="text-base text-slate-600">กรุณากด <span class="font-bold text-blue-600">"อนุญาต (Allow)"</span> ให้ใช้กล้อง และถอยห่างจากกล้องเพื่อให้เห็นช่วงลำตัวนะครับ!</p>
+<div class="w-12 h-12 border-4 border-pink-500 border-t-transparent rounded-full animate-spin mt-2"></div>
+</div>
+</div>
+<!-- 2. START SCREEN -->
+<div id="start-screen" class="hidden w-full h-full flex flex-col items-center justify-center text-center my-auto">
+<div class="bg-white/90 backdrop-blur-md text-slate-800 p-6 md:p-8 rounded-[30px] jelly-box max-w-lg w-full flex flex-col items-center gap-5">
+<div class="text-6xl md:text-7xl animate-pulse">🕺⚡</div>
+<h1 class="text-3xl md:text-4xl font-bold text-purple-600 leading-tight">คณิตคิดเลขเร็ว AR
+<span class="text-pink-500 text-2xl md:text-3xl">(Body Motion Edition)</span></h1>
+<p class="text-slate-600 text-base md:text-lg">ขยับร่างกาย ยื่นข้อมือ/มือไปแตะปุ่มคำตอบกลางอากาศเพื่อตอบคำถาม!</p>
+<button id="start-btn" onclick="startGame()" class="pose-interact jelly-btn jelly-btn-green w-full py-4 text-2xl md:text-3xl font-bold rounded-[30px] cursor-pointer mt-2">
+🚀 เริ่มเล่นเลย!
+</button>
+</div>
+</div>
+<!-- 3. GAME SCREEN -->
+<div id="game-screen" class="hidden w-full h-full flex flex-col justify-between items-center max-h-[95vh] my-auto py-2">
+<!-- Header Bar -->
+<div class="w-full max-w-2xl flex justify-between items-center px-2">
+<div class="bg-white/90 backdrop-blur-md px-5 py-2 rounded-[25px] jelly-box text-purple-700 font-bold text-lg md:text-xl flex items-center gap-2">
+<span>📌 ข้อที่:</span>
+<span id="question-number" class="text-pink-600 text-2xl">1/5</span>
+</div>
+<div class="bg-white/90 backdrop-blur-md px-5 py-2 rounded-[25px] jelly-box text-amber-600 font-bold text-lg md:text-xl flex items-center gap-2">
+<span>🏆 คะแนน:</span>
+<span id="current-score" class="text-emerald-600 text-2xl">0</span>
+</div>
+</div>
+<!-- Question Card -->
+<div class="w-full max-w-xl my-auto px-2">
+<div class="bg-white/95 backdrop-blur-md p-6 md:p-8 rounded-[30px] jelly-box text-center shadow-2xl relative">
+<span class="absolute -top-4 left-1/2 transform -translate-x-1/2 bg-yellow-400 text-slate-900 font-bold px-4 py-1 rounded-full text-sm border-2 border-white shadow-sm">
+ยื่นมือแตะคำตอบที่ถูกต้อง 🎯
+</span>
+<div id="question-text" class="text-4xl md:text-6xl font-bold text-slate-800 tracking-wider">
+0 + 0 = ?
+</div>
+</div>
+</div>
+<!-- Answers Grid -->
+<div class="w-full max-w-2xl grid grid-cols-2 gap-3 md:gap-4 px-2 mb-2">
+<button id="opt-0" onclick="checkAnswer(0)" class="pose-interact jelly-btn jelly-btn-yellow py-3 md:py-4 text-3xl md:text-4xl font-bold rounded-[30px] flex items-center justify-center">
+00
+</button>
+<button id="opt-1" onclick="checkAnswer(1)" class="pose-interact jelly-btn jelly-btn-blue py-3 md:py-4 text-3xl md:text-4xl font-bold rounded-[30px] flex items-center justify-center">
+00
+</button>
+<button id="opt-2" onclick="checkAnswer(2)" class="pose-interact jelly-btn jelly-btn-pink py-3 md:py-4 text-3xl md:text-4xl font-bold rounded-[30px] flex items-center justify-center">
+00
+</button>
+<button id="opt-3" onclick="checkAnswer(3)" class="pose-interact jelly-btn jelly-btn-purple py-3 md:py-4 text-3xl md:text-4xl font-bold rounded-[30px] flex items-center justify-center">
+00
+</button>
+</div>
+</div>
+<!-- 4. RESULT SCREEN -->
+<div id="result-screen" class="hidden w-full h-full flex flex-col items-center justify-center text-center my-auto">
+<div class="bg-white/95 backdrop-blur-md text-slate-800 p-6 md:p-8 rounded-[30px] jelly-box max-w-md w-full flex flex-col items-center gap-4 relative z-20">
+<div id="result-emoji" class="text-7xl animate-bounce">🎉</div>
+<h2 class="text-3xl font-bold text-purple-600">สรุปผลการเล่น</h2>
+<div class="bg-purple-50 rounded-2xl p-4 w-full border-2 border-purple-200">
+<p class="text-slate-600 text-lg">คะแนนรวมของคุณ</p>
+<p id="final-score" class="text-5xl font-bold text-pink-500 my-1">5 / 5</p>
+<p id="result-feedback" class="text-emerald-600 font-semibold">ขยับร่างกายเก่งมาก ตอบถูกหมดเลย! 🌟</p>
+</div>
+<button id="restart-btn" onclick="restartGame()" class="pose-interact jelly-btn jelly-btn-green w-full py-4 text-2xl font-bold rounded-[30px] cursor-pointer mt-2">
+🔄 เล่นอีกครั้ง
+</button>
+</div>
+</div>
+</div>
+<!-- Confetti Container -->
+<div id="confetti-container" class="fixed inset-0 pointer-events-none z-50 overflow-hidden"></div>
+<script>
+/* ------------------------------------------------------------------
+* 1. AUDIO SYNTHESIS ENGINE (Tone.js)
+* ------------------------------------------------------------------ */
+let synth, polySynth;
+function initAudio() {
+try {
+if (Tone.context.state !== 'running') {
+Tone.start();
+}
+if (!synth) {
+synth = new Tone.Synth().toDestination();
+polySynth = new Tone.PolySynth(Tone.Synth).toDestination();
+}
+} catch (e) {
+console.warn("Audio Context Warning:", e);
+}
+}
+function playSound(type) {
+try {
+initAudio();
+if (type === 'hover') {
+synth.triggerAttackRelease("E5", "8n");
+} else if (type === 'click') {
+synth.triggerAttackRelease("G5", "8n");
+} else if (type === 'correct') {
+const now = Tone.now();
+polySynth.triggerAttackRelease(["C5", "E5", "G5", "C6"], "8n", now);
+} else if (type === 'wrong') {
+synth.triggerAttackRelease("F2", "4n");
+} else if (type === 'victory') {
+const now = Tone.now();
+polySynth.triggerAttackRelease(["C4", "E4", "G4", "C5"], "8n", now);
+polySynth.triggerAttackRelease(["G4", "B4", "D5", "G5"], "8n", now + 0.25);
+polySynth.triggerAttackRelease(["C5", "E5", "G5", "C6"], "4n", now + 0.5);
+}
+} catch (e) {
+console.warn("Audio Exception:", e);
+}
+}
+/* ------------------------------------------------------------------
+* 2. MATH GAME LOGIC
+* ------------------------------------------------------------------ */
+let questionPool = [];
+let currentGameQuestions = [];
+let currentQuestionIndex = 0;
+let score = 0;
+let isAnsweringBlocked = false;
+function generateQuestions() {
+questionPool = [];
+const operators = ['+', '-', '×', '÷'];
+for (let i = 0; i < 50; i++) {
+let op = operators[Math.floor(Math.random() * operators.length)];
+let num1, num2, answer;
+if (op === '+') {
+num1 = Math.floor(Math.random() * 20) + 1;
+num2 = Math.floor(Math.random() * 20) + 1;
+answer = num1 + num2;
+} else if (op === '-') {
+num1 = Math.floor(Math.random() * 20) + 5;
+num2 = Math.floor(Math.random() * num1) + 1;
+answer = num1 - num2;
+} else if (op === '×') {
+num1 = Math.floor(Math.random() * 9) + 2;
+num2 = Math.floor(Math.random() * 9) + 1;
+answer = num1 * num2;
+} else if (op === '÷') {
+num2 = Math.floor(Math.random() * 8) + 2;
+answer = Math.floor(Math.random() * 9) + 1;
+num1 = num2 * answer;
+}
+let options = new Set([answer]);
+while (options.size < 4) {
+let offset = (Math.floor(Math.random() * 5) + 1) * (Math.random() < 0.5 ? 1 : -1);
+let wrongOpt = answer + offset;
+if (wrongOpt >= 0) options.add(wrongOpt);
+}
+let shuffledOptions = Array.from(options).sort(() => Math.random() - 0.5);
+questionPool.push({
+text: ⁠${num1} ${op} ${num2} = ?⁠,
+answer: answer,
+options: shuffledOptions
+});
+}
+}
+function startGame() {
+playSound('click');
+generateQuestions();
+currentGameQuestions = [...questionPool].sort(() => Math.random() - 0.5).slice(0, 5);
+currentQuestionIndex = 0;
+score = 0;
+document.getElementById('start-screen').classList.add('hidden');
+document.getElementById('result-screen').classList.add('hidden');
+document.getElementById('game-screen').classList.remove('hidden');
+loadQuestion();
+}
+function loadQuestion() {
+isAnsweringBlocked = false;
+const q = currentGameQuestions[currentQuestionIndex];
+document.getElementById('question-number').innerText = ⁠${currentQuestionIndex + 1}/5⁠;
+document.getElementById('current-score').innerText = score;
+document.getElementById('question-text').innerText = q.text;
+for (let i = 0; i < 4; i++) {
+const btn = document.getElementById(⁠opt-${i}⁠);
+btn.innerText = q.options[i];
+btn.classList.remove('pop-correct', 'shake-wrong');
+}
+}
+function checkAnswer(selectedIndex) {
+if (isAnsweringBlocked) return;
+isAnsweringBlocked = true;
+const q = currentGameQuestions[currentQuestionIndex];
+const selectedBtn = document.getElementById(⁠opt-${selectedIndex}⁠);
+const selectedValue = q.options[selectedIndex];
+if (selectedValue === q.answer) {
+score++;
+document.getElementById('current-score').innerText = score;
+playSound('correct');
+selectedBtn.classList.add('pop-correct');
+createStarParticles(selectedBtn);
+} else {
+playSound('wrong');
+selectedBtn.classList.add('shake-wrong');
+}
+setTimeout(() => {
+currentQuestionIndex++;
+if (currentQuestionIndex < 5) {
+loadQuestion();
+} else {
+showResult();
+}
+}, 1200);
+}
+function createStarParticles(element) {
+const rect = element.getBoundingClientRect();
+const centerX = rect.left + rect.width / 2;
+const centerY = rect.top + rect.height / 2;
+for (let i = 0; i < 10; i++) {
+const star = document.createElement('div');
+star.className = 'star-particle';
+star.innerText = '⭐';
+star.style.left = ⁠${centerX}px⁠;
+star.style.top = ⁠${centerY}px⁠;
+const angle = (i * 36) * (Math.PI / 180);
+const distance = 80 + Math.random() * 40;
+const tx = Math.cos(angle) * distance;
+const ty = Math.sin(angle) * distance;
+star.style.setProperty('--tw-translate-x', ⁠${tx}px⁠);
+star.style.setProperty('--tw-translate-y', ⁠${ty}px⁠);
+document.body.appendChild(star);
+setTimeout(() => star.remove(), 800);
+}
+}
+function showResult() {
+document.getElementById('game-screen').classList.add('hidden');
+document.getElementById('result-screen').classList.remove('hidden');
+document.getElementById('final-score').innerText = ⁠${score} / 5⁠;
+const feedback = document.getElementById('result-feedback');
+const emoji = document.getElementById('result-emoji');
+if (score === 5) {
+emoji.innerText = '🏆';
+feedback.innerText = 'ขยับร่างกายเก่งมาก ตอบถูกหมดทุกข้อเลย! 🌟';
+} else if (score >= 3) {
+emoji.innerText = '🎉';
+feedback.innerText = 'ยอดเยี่ยมมากๆ! อีกนิดเดียวจะเต็มแล้ว 💪';
+} else {
+emoji.innerText = '🎈';
+feedback.innerText = 'ได้ออกกำลังกายและคิดเลข สนุกมากๆ เลย! ✌️';
+}
+playSound('victory');
+triggerConfetti();
+}
+function triggerConfetti() {
+const container = document.getElementById('confetti-container');
+container.innerHTML = '';
+const emojis = ['🎉', '⭐', '🎈', '🍬', '✨', '🍎'];
+for (let i = 0; i < 45; i++) {
+const confetti = document.createElement('div');
+confetti.className = 'confetti';
+confetti.innerText = emojis[Math.floor(Math.random() * emojis.length)];
+confetti.style.left = ⁠${Math.random() * 100}vw⁠;
+confetti.style.animationDuration = ⁠${2 + Math.random() * 3}s⁠;
+confetti.style.animationDelay = ⁠${Math.random() * 1.5}s⁠;
+container.appendChild(confetti);
+}
+setTimeout(() => { container.innerHTML = ''; }, 6000);
+}
+function restartGame() {
+startGame();
+}
+/* ------------------------------------------------------------------
+* 3. COMPUTER VISION & BODY SKELETON TRACKING (MediaPipe Pose)
+* ------------------------------------------------------------------ */
+const videoElement = document.getElementById('webcam');
+const canvasElement = document.getElementById('output_canvas');
+const canvasCtx = canvasElement.getContext('2d');
+const leftPointer = document.getElementById('left-hand-pointer');
+const leftRing = document.getElementById('left-progress-ring');
+const rightPointer = document.getElementById('right-hand-pointer');
+const rightRing = document.getElementById('right-progress-ring');
+let hoverElement = null;
+let hoverStartTime = null;
+const HOVER_DURATION = 1000; // 1.0 second threshold for body movement
+const RING_CIRCUMFERENCE = 213.6;
+function resizeCanvas() {
+canvasElement.width = window.innerWidth;
+canvasElement.height = window.innerHeight;
+}
+window.addEventListener('resize', resizeCanvas);
+resizeCanvas();
+// Skeleton connections mapping for Body Pose
+const SKELETON_CONNECTIONS = [
+[11, 12], // Shoulders
+[11, 13], [13, 15], // Left Arm
+[12, 14], [14, 16], // Right Arm
+[11, 23], [12, 24], [23, 24], // Torso
+[23, 25], [25, 27], // Left Leg
+[24, 26], [26, 28]  // Right Leg
+];
+function onPoseResults(results) {
+document.getElementById('loading-screen').classList.add('hidden');
+if (document.getElementById('start-screen').classList.contains('hidden') &&
+document.getElementById('game-screen').classList.contains('hidden') &&
+document.getElementById('result-screen').classList.contains('hidden')) {
+document.getElementById('start-screen').classList.remove('hidden');
+}
+canvasCtx.save();
+canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
+// Draw webcam feed
+canvasCtx.drawImage(results.image, 0, 0, canvasElement.width, canvasElement.height);
+if (results.poseLandmarks) {
+const landmarks = results.poseLandmarks;
+// Draw AR Skeleton lines
+drawBodySkeleton(landmarks);
+// Landmark 15: Left Wrist, Landmark 16: Right Wrist
+const leftWrist = landmarks[15];
+const rightWrist = landmarks[16];
+let activePoint = null;
+// Update Left Wrist Pointer Position
+if (leftWrist && leftWrist.visibility > 0.5) {
+const lx = (1 - leftWrist.x) * window.innerWidth;
+const ly = leftWrist.y * window.innerHeight;
+leftPointer.style.opacity = '1';
+leftPointer.style.left = ⁠${lx}px⁠;
+leftPointer.style.top = ⁠${ly}px⁠;
+activePoint = { x: lx, y: ly, ring: leftRing };
+} else {
+leftPointer.style.opacity = '0';
+}
+// Update Right Wrist Pointer Position
+if (rightWrist && rightWrist.visibility > 0.5) {
+const rx = (1 - rightWrist.x) * window.innerWidth;
+const ry = rightWrist.y * window.innerHeight;
+rightPointer.style.opacity = '1';
+rightPointer.style.left = ⁠${rx}px⁠;
+rightPointer.style.top = ⁠${ry}px⁠;
+// Prioritize right hand or closest active point
+if (!activePoint) {
+activePoint = { x: rx, y: ry, ring: rightRing };
+}
+} else {
+rightPointer.style.opacity = '0';
+}
+// Handle pose interactions with choice buttons
+if (activePoint) {
+handlePoseHover(activePoint);
+} else {
+resetPoseHover();
+}
+} else {
+leftPointer.style.opacity = '0';
+rightPointer.style.opacity = '0';
+resetPoseHover();
+}
+canvasCtx.restore();
+}
+function drawBodySkeleton(landmarks) {
+// Draw skeleton bones
+canvasCtx.strokeStyle = '#00E676';
+canvasCtx.lineWidth = 6;
+canvasCtx.lineCap = 'round';
+SKELETON_CONNECTIONS.forEach(([i, j]) => {
+const lm1 = landmarks[i];
+const lm2 = landmarks[j];
+if (lm1 && lm2 && lm1.visibility > 0.4 && lm2.visibility > 0.4) {
+canvasCtx.beginPath();
+canvasCtx.moveTo((1 - lm1.x) * canvasElement.width, lm1.y * canvasElement.height);
+canvasCtx.lineTo((1 - lm2.x) * canvasElement.width, lm2.y * canvasElement.height);
+canvasCtx.stroke();
+}
+});
+// Draw joint nodes
+landmarks.forEach((lm, index) => {
+if (lm.visibility > 0.4 && index >= 11) { // Upper and lower body joints
+const x = (1 - lm.x) * canvasElement.width;
+const y = lm.y * canvasElement.height;
+canvasCtx.beginPath();
+canvasCtx.arc(x, y, 8, 0, 2 * Math.PI);
+canvasCtx.fillStyle = (index === 15 || index === 16) ? '#FFD700' : '#FF007F';
+canvasCtx.fill();
+canvasCtx.strokeStyle = '#FFFFFF';
+canvasCtx.lineWidth = 2;
+canvasCtx.stroke();
+}
+});
+}
+function handlePoseHover(point) {
+const element = document.elementFromPoint(point.x, point.y);
+const interactable = element ? element.closest('.pose-interact') : null;
+if (interactable && !isAnsweringBlocked) {
+if (hoverElement !== interactable) {
+hoverElement = interactable;
+hoverStartTime = Date.now();
+playSound('hover');
+}
+const elapsedTime = Date.now() - hoverStartTime;
+const progress = Math.min(elapsedTime / HOVER_DURATION, 1);
+const offset = RING_CIRCUMFERENCE - (progress * RING_CIRCUMFERENCE);
+point.ring.style.strokeDashoffset = offset;
+if (progress >= 1) {
+interactable.click();
+resetPoseHover();
+}
+} else {
+resetPoseHover();
+}
+}
+function resetPoseHover() {
+hoverElement = null;
+hoverStartTime = null;
+leftRing.style.strokeDashoffset = RING_CIRCUMFERENCE;
+rightRing.style.strokeDashoffset = RING_CIRCUMFERENCE;
+}
+/* Initialize MediaPipe Pose Model */
+const pose = new Pose({
+locateFile: (file) => ⁠https://cdn.jsdelivr.net/npm/@mediapipe/pose/${file}⁠
+});
+pose.setOptions({
+modelComplexity: 1,
+smoothLandmarks: true,
+minDetectionConfidence: 0.5,
+minTrackingConfidence: 0.5
+});
+pose.onResults(onPoseResults);
+const camera = new Camera(videoElement, {
+onFrame: async () => {
+await pose.send({ image: videoElement });
+},
+width: 1280,
+height: 720
+});
+camera.start().catch(err => {
+console.error("Camera access failed:", err);
+alert("ไม่สามารถเข้าถึงกล้องได้ กรุณาอนุญาตให้ใช้งานกล้องบนอุปกรณ์ของคุณ");
+});
+</script>
+</body>
+</html>
